@@ -1,20 +1,38 @@
-"""Конфигурация tenri-bot. Все параметры — через env-переменные TENRI_* (или .env)."""
+"""Конфигурация tenri-bot.
+
+Параметры читаются из переменных окружения. Имена принимаются в ДВУХ вариантах —
+с префиксом `TENRI_` и без него, — чтобы деплой не падал из-за того, что в панели
+Railway переменную назвали `BOT_TOKEN` вместо `TENRI_BOT_TOKEN` (частая ошибка).
+"""
 from __future__ import annotations
 
+import sys
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
+from pydantic import AliasChoices, Field, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="TENRI_", env_file=".env", extra="ignore")
+def _alias(*names: str) -> AliasChoices:
+    """Принимать имя и с префиксом TENRI_, и без него (регистр не важен)."""
+    out: list[str] = []
+    for n in names:
+        out += [f"TENRI_{n}", n]
+    return AliasChoices(*out)
 
-    bot_token: str
-    group_id: int = 0                 # id закрытой группы (-100...)
-    admin_ids: str = ""               # "111,222"
-    db_path: str = "data/tenribot.db"
-    timezone: str = "Asia/Almaty"
+
+class Settings(BaseSettings):
+    # env_prefix оставляем для полей без явного alias; case_sensitive=False — TENRI_/tenri_
+    model_config = SettingsConfigDict(env_prefix="TENRI_", env_file=".env",
+                                      case_sensitive=False, extra="ignore")
+
+    # Обязательное. Принимается как TENRI_BOT_TOKEN, так и BOT_TOKEN.
+    bot_token: str = Field(validation_alias=_alias("BOT_TOKEN"))
+    group_id: int = Field(0, validation_alias=_alias("GROUP_ID"))
+    admin_ids: str = Field("", validation_alias=_alias("ADMIN_IDS"))
+    db_path: str = Field("data/tenribot.db", validation_alias=_alias("DB_PATH"))
+    timezone: str = Field("Asia/Almaty", validation_alias=_alias("TIMEZONE", "TZ"))
     site_url: str = "https://baqsy.tnriazun.com"
 
     # Интеграция с платформой Baqsy (Django на VPS). Пусто = автономный режим.
@@ -23,9 +41,9 @@ class Settings(BaseSettings):
 
     # AI-ассистент. Основной провайдер — Google Gemini, OpenAI — опциональный резерв.
     ai_provider: str = "gemini"           # gemini | openai (предпочтительный; второй — фолбэк)
-    gemini_api_key: str = ""              # https://aistudio.google.com/apikey
+    gemini_api_key: str = Field("", validation_alias=_alias("GEMINI_API_KEY"))
     gemini_model: str = "gemini-2.0-flash"
-    openai_api_key: str = ""              # резервный провайдер (не обязателен)
+    openai_api_key: str = Field("", validation_alias=_alias("OPENAI_API_KEY"))
     openai_model: str = "gpt-4o-mini"
     assistant_daily_limit: int = 30       # сообщений ассистенту на лида в сутки
     assistant_history_window: int = 10    # сколько последних сообщений слать в контекст
@@ -42,4 +60,28 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    try:
+        return Settings()
+    except ValidationError as exc:
+        # Понятное сообщение вместо стены pydantic-трейсбеков в логах Railway.
+        def _norm(name: str) -> str:
+            name = name.upper()
+            return name if name.startswith("TENRI_") else f"TENRI_{name}"
+
+        missing = [_norm(str(e["loc"][0])) for e in exc.errors() if e.get("type") == "missing"]
+        names = ", ".join(dict.fromkeys(missing)) or "TENRI_BOT_TOKEN"
+        msg = (
+            "\n" + "=" * 64 + "\n"
+            "[config] НЕ ЗАДАНЫ обязательные переменные окружения: " + names + "\n"
+            "Задайте их в Railway -> вкладка Variables и передеплойте:\n"
+            "  TENRI_BOT_TOKEN   - токен от @BotFather (ОБЯЗАТЕЛЬНО)\n"
+            "  TENRI_GROUP_ID    - id закрытой группы, напр. -1001234567890\n"
+            "  TENRI_ADMIN_IDS   - ваш telegram id (напр. 123456789)\n"
+            "  TENRI_DB_PATH     - /data/tenribot.db (при подключённом Volume)\n"
+            "Имена можно и без префикса TENRI_. Подробнее - docs/DEPLOY_RAILWAY.md\n"
+            + "=" * 64 + "\n")
+        try:
+            sys.stderr.write(msg)
+        except UnicodeEncodeError:  # на случай не-UTF-8 локали в контейнере
+            sys.stderr.write(msg.encode("utf-8", "backslashreplace").decode("ascii", "ignore"))
+        raise SystemExit(1) from None

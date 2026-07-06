@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 TZ=Asia/Almaty
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 TZ=Asia/Almaty \
+    PYTHONIOENCODING=utf-8 LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 # tzdata — обязателен: config.py использует ZoneInfo(...), в slim-образе базы TZ нет и
 #   ZoneInfoNotFoundError уронил бы старт. gosu — чтобы дропнуть root после chown тома.
