@@ -1,0 +1,4 @@
+# Скрипты для контейнера всегда с LF — иначе shebang ломается в Linux-образе
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+Dockerfile text eol=lf
