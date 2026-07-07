@@ -94,6 +94,12 @@ def next_run_for(sch: Schedule) -> datetime | None:
         nxt = next_run(sch.kind, time_of_day=sch.time_of_day,
                        weekdays=sch.weekdays, day_of_month=sch.day_of_month, after=nxt)
         guard += 1
+    if nxt is not None and nxt <= now:
+        # Пропущено больше 1000 слотов (очень долгий простой) — не оставляем next_run_at
+        # в прошлом (иначе schedules_due выбирал бы рассылку каждый тик и она бы
+        # отправлялась повторно). Якорим на now → результат строго в будущем.
+        nxt = next_run(sch.kind, time_of_day=sch.time_of_day,
+                       weekdays=sch.weekdays, day_of_month=sch.day_of_month, after=now)
     return nxt
 
 

@@ -35,10 +35,17 @@ def provider_chain() -> list[str]:
 async def _gemini(system: str, messages: list[dict], temperature: float,
                   max_tokens: int) -> tuple[str, int]:
     s = get_settings()
+    # Gemini v1beta требует, чтобы первый элемент contents имел role 'user'. После
+    # неудачного прошлого хода в истории может остаться «висячий» user без ответа —
+    # в окне контекста он выталкивает assistant('model') в начало → HTTP 400. Срезаем
+    # ведущие не-user ходы, чтобы запрос всегда начинался с пользователя.
+    hist = list(messages)
+    while hist and hist[0]["role"] != "user":
+        hist.pop(0)
     contents = [
         {"role": "user" if m["role"] == "user" else "model",
          "parts": [{"text": m["content"]}]}
-        for m in messages
+        for m in hist
     ]
     body = {
         "system_instruction": {"parts": [{"text": system}]},
@@ -88,19 +95,21 @@ async def _openai(system: str, messages: list[dict], temperature: float,
     try:
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=s.openai_api_key)
-        resp = await client.chat.completions.create(
-            model=s.openai_model,
-            messages=[{"role": "system", "content": system}]
-            + [{"role": m["role"], "content": m["content"]} for m in messages],
-            max_tokens=max_tokens,
-            temperature=temperature,
-            timeout=45,
-        )
-        text = (resp.choices[0].message.content or "").strip()
-        if not text:
-            raise AIProviderError("openai: пустой текст")
-        return text, (resp.usage.total_tokens if resp.usage else 0)
+        # async with — иначе httpx-пул клиента (сокеты/fd) течёт: клиент создаётся на
+        # каждый вызов и без явного закрытия освобождается только сборщиком мусора.
+        async with AsyncOpenAI(api_key=s.openai_api_key) as client:
+            resp = await client.chat.completions.create(
+                model=s.openai_model,
+                messages=[{"role": "system", "content": system}]
+                + [{"role": m["role"], "content": m["content"]} for m in messages],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=45,
+            )
+            text = (resp.choices[0].message.content or "").strip()
+            if not text:
+                raise AIProviderError("openai: пустой текст")
+            return text, (resp.usage.total_tokens if resp.usage else 0)
     except AIProviderError:
         raise
     except Exception as exc:

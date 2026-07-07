@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from html import escape
 
 import httpx
 
@@ -83,13 +84,15 @@ async def fetch_donation_requisites() -> str | None:
     except Exception as exc:
         log.warning("не удалось получить контент с сайта: %s", exc)
         return None
-    card = (blocks.get("donation_card_number") or "").strip()
+    card = escape((blocks.get("donation_card_number") or "").strip())
     if not card:
         return None
+    # Свободные поля с сайта (держатель/банк) экранируем: символы &,<,> иначе роняют
+    # send_message с parse_mode=HTML (Telegram 400) — донор не увидит реквизиты.
     lines = ["<b>Реквизиты для перевода:</b>", f"Карта: <code>{card}</code>"]
     if blocks.get("donation_card_holder"):
-        lines.append(f"Получатель: {blocks['donation_card_holder']}")
+        lines.append(f"Получатель: {escape(str(blocks['donation_card_holder']))}")
     if blocks.get("donation_card_bank"):
-        lines.append(f"Банк: {blocks['donation_card_bank']}")
+        lines.append(f"Банк: {escape(str(blocks['donation_card_bank']))}")
     lines.append("\nПосле перевода нажмите «Я перевёл(а)» — мы скажем спасибо лично.")
     return "\n".join(lines)

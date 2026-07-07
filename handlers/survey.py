@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from html import escape
 
 from aiogram import Bot, F, Router
@@ -320,7 +321,9 @@ async def msg_answer(message: Message, lead: Lead, bot: Bot, state: FSMContext) 
     if q.field_type == "number":
         normalized = text.replace(",", ".").replace(" ", "")
         try:
-            float(normalized)
+            val = float(normalized)
+            if not math.isfinite(val):  # float() пропускает inf/-inf/nan/1e999 — отсекаем
+                raise ValueError
         except ValueError:
             await message.answer("Нужно число — например: 12 или 3.5")
             return

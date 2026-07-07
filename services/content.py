@@ -37,8 +37,14 @@ def render_text(bt: BotText, lead: Lead | None) -> str:
 
 
 async def send_slot(bot: Bot, chat_id: int, key: str, lead: Lead | None = None,
-                    extra_kb=None) -> bool:
-    """Отправить слот контента. Возвращает False, если пользователь заблокировал бота."""
+                    extra_kb=None) -> bool | None:
+    """Отправить слот контента.
+
+    True  — доставлено;
+    False — пользователь заблокировал бота (403);
+    None  — временный сбой (сеть/флуд/битый HTML) — доставку стоит повторить позже,
+            а не помечать шаг как отправленный.
+    """
     bt = await repo.get_text(key)
     if bt is None:
         log.warning("BotText '%s' не найден", key)
@@ -66,4 +72,4 @@ async def send_slot(bot: Bot, chat_id: int, key: str, lead: Lead | None = None,
         return False
     except Exception:
         log.exception("send_slot('%s') → chat %s failed", key, chat_id)
-        return True
+        return None  # временный сбой — не помечаем как доставленное

@@ -32,7 +32,10 @@ class Settings(BaseSettings):
     group_id: int = Field(0, validation_alias=_alias("GROUP_ID"))
     admin_ids: str = Field("", validation_alias=_alias("ADMIN_IDS"))
     db_path: str = Field("data/tenribot.db", validation_alias=_alias("DB_PATH"))
-    timezone: str = Field("Asia/Almaty", validation_alias=_alias("TIMEZONE", "TZ"))
+    # Только TENRI_TIMEZONE/TIMEZONE. Раньше сюда был алиасом привязан POSIX TZ — а его
+    # операторы штатно ставят для системного времени/логов контейнера; лишний TZ=UTC молча
+    # сдвигал бы тихие часы и расписания. Бизнес-таймзону задаём отдельным именем.
+    timezone: str = Field("Asia/Almaty", validation_alias=_alias("TIMEZONE"))
     site_url: str = "https://baqsy.tnriazun.com"
 
     # Интеграция с платформой Baqsy (Django на VPS). Пусто = автономный режим.
@@ -51,7 +54,23 @@ class Settings(BaseSettings):
 
     @property
     def admins(self) -> list[int]:
-        return [int(x) for x in self.admin_ids.replace(" ", "").split(",") if x]
+        out: list[int] = []
+        for x in self.admin_ids.replace(" ", "").split(","):
+            if not x:
+                continue
+            try:
+                out.append(int(x))
+            except ValueError:
+                # admins читается на импорте (handlers/admin), поэтому «сырой» ValueError
+                # уронил бы старт трейсбеком. Даём понятное сообщение и fail-fast.
+                raise SystemExit(
+                    "\n" + "=" * 64 + "\n"
+                    f"[config] TENRI_ADMIN_IDS содержит нечисловое значение: {x!r}\n"
+                    "Укажите только telegram id администраторов через запятую, "
+                    "напр. 123456789,987654321\n"
+                    + "=" * 64 + "\n"
+                ) from None
+        return out
 
     @property
     def tz(self) -> ZoneInfo:

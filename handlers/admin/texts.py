@@ -101,8 +101,10 @@ async def msg_new_text(message: Message, state: FSMContext, bot: Bot) -> None:
 @router.callback_query(AdminTextStates.confirm, F.data == "adm:t:save")
 async def cb_save(call: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
+    # new_media="" при правке только текста → передаём None, иначе save_text затёр бы
+    # существующее фото слота пустой строкой (media_file_id обновляется лишь при not None).
     await repo.save_text(data["key"], text=data.get("new_text"),
-                         media_file_id=data.get("new_media"),
+                         media_file_id=(data.get("new_media") or None),
                          edited_by=str(call.from_user.id))
     await state.clear()
     await call.message.answer(f"✅ Слот <code>{data['key']}</code> обновлён.",

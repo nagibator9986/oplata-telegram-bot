@@ -58,6 +58,8 @@ async def _tick(bot: Bot) -> None:
                 await repo.mark_followup(task.id, "pending", due_at=schedule_calc.next_quiet_ok(now))
                 continue
             ok = await send_slot(bot, lead.telegram_id, rule.text_key, lead)
+            if ok is None:
+                continue  # временный сбой — задача остаётся pending, повторим на след. тике
             await repo.mark_followup(task.id, "sent" if ok else "cancelled")
             await repo.log_message(lead_id=lead.id, kind="followup",
                                    status="sent" if ok else "blocked")
@@ -70,6 +72,8 @@ async def _tick(bot: Bot) -> None:
             await send_donation_offer(bot, lead)
         for lead in await repo.leads_due_donation_reminder():
             ok = await send_slot(bot, lead.telegram_id, "donation_reminder", lead)
+            if ok is None:
+                continue  # временный сбой — не проставляем reminded_at, повторим позже
             await repo.update_lead(lead.telegram_id, donation_reminded_at=now)
             if ok:
                 await repo.log_message(lead_id=lead.id, kind="donation", status="reminded")

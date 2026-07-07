@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -19,6 +19,19 @@ os.makedirs(os.path.dirname(_settings.db_path) or ".", exist_ok=True)
 
 engine = create_async_engine(f"sqlite+aiosqlite:///{_settings.db_path}")
 Session = async_sessionmaker(engine, expire_on_commit=False)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _register_unicode_lower(dbapi_conn, _record) -> None:
+    """Переопределяем SQLite lower() на Python str.lower (Unicode-aware).
+
+    Встроенный lower() SQLite приводит к нижнему регистру только ASCII, поэтому
+    ilike() по кириллице был фактически регистрозависимым — админский поиск лидов
+    по имени/username находил их только при точном совпадении регистра. С этой
+    функцией lower('ИНКАРА') == 'инкара', и ilike снова работает как ожидается.
+    """
+    dbapi_conn.create_function(
+        "lower", 1, lambda s: s.lower() if isinstance(s, str) else s, deterministic=True)
 
 
 async def init_db() -> None:

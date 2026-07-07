@@ -88,6 +88,13 @@ async def _run_broadcast_locked(bot: Bot, broadcast_id: int) -> None:
                     try:
                         await _send_payload(bot, lead.telegram_id, b)
                         sent += 1
+                        # журналируем и повторную доставку — иначе MessageLog расходится
+                        # со stats["sent"], а already_sent() не увидел бы этого лида
+                        await repo.log_message(broadcast_id=b.id, lead_id=lead.id, run_no=run_no,
+                                               kind="broadcast", status="sent")
+                    except TelegramForbiddenError:
+                        blocked += 1
+                        await repo.update_lead(lead.telegram_id, is_blocked=True)
                     except Exception:
                         failed += 1
                 except TelegramForbiddenError:

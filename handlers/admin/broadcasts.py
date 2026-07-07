@@ -81,6 +81,13 @@ async def cb_send_now(call: CallbackQuery, bot: Bot) -> None:
     if b.status == "sending":  # дебаунс: уже идёт (двойной тап / параллельный тик)
         await call.answer("Рассылка уже отправляется ⏳", show_alert=True)
         return
+    # Закрываем окно двойного тапа: помечаем sending СИНХРОННО (в хендлере), ДО спавна
+    # фоновой задачи. Раньше статус ставился внутри run_broadcast после нескольких await —
+    # второй апдейт того же админа успевал прочитать не-sending и спавнил второй прогон,
+    # который слал всей аудитории повторно (run_no у каждого прогона новый → already_sent
+    # не спасал). Апдейты одного пользователя сериализованы (SimpleEventIsolation), поэтому
+    # синхронной пометки достаточно.
+    await repo.update_broadcast(bid, status="sending")
     runtime.spawn(run_broadcast(bot, bid))
     await call.answer("Запустил 🚀", show_alert=True)
 
@@ -289,7 +296,16 @@ async def _show_confirm(message: Message, state: FSMContext) -> None:
         await message.answer(data.get("text", ""), reply_markup=markup,
                              disable_web_page_preview=True)
     kind = data.get("kind", "now")
-    when = {"now": "сейчас", "once": f"разово ({data.get('run_at', '')[:16]})",
+    # run_at хранится в наивном UTC (parse_local_dt уже перевёл локальное время админа).
+    # В подтверждении показываем обратно в локальной TZ, иначе админ видит время на
+    # величину сдвига раньше введённого (для Asia/Almaty — на 5 часов).
+    once_label = ""
+    if data.get("run_at"):
+        from datetime import datetime
+        _local = (datetime.fromisoformat(data["run_at"]).replace(tzinfo=timezone.utc)
+                  .astimezone(get_settings().tz))
+        once_label = _local.strftime("%d.%m.%Y %H:%M")
+    when = {"now": "сейчас", "once": f"разово ({once_label})",
             "daily": f"ежедневно в {data.get('time_of_day')}",
             "weekly": f"по {','.join(WEEKDAY_NAMES[d] for d in data.get('weekdays', []))} "
                       f"в {data.get('time_of_day')}",

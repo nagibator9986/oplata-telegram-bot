@@ -59,9 +59,18 @@ async def cb_requisites(call: CallbackQuery, lead: Lead, bot: Bot) -> None:
 
 @router.callback_query(F.data == "don:paid")
 async def cb_paid(call: CallbackQuery, lead: Lead, bot: Bot) -> None:
+    await call.answer()
+    # Гасим кнопку и защищаемся от повторных тапов: без этого каждый тап заново слал бы
+    # уведомление админам и дублировал событие "donated" на сайт (advance — уже no-op).
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    if lead.funnel_state == Funnel.DONATED:
+        await call.message.answer("Спасибо, ваш перевод уже отмечен 🌿")
+        return
     lead = await advance(lead, Funnel.DONATED, donated_at=utcnow())
     platform.sync_lead(lead, "donated")
-    await call.answer()
     await send_slot(bot, call.message.chat.id, "donation_thanks", lead)
     await notify_admins(bot, f"💚 <b>Донат! Клиент нажал «Я перевёл(а)»</b> — проверьте поступление.\n\n"
                              f"{lead_card(lead)}")
