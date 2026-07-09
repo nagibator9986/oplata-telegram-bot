@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     group_id: int = Field(0, validation_alias=_alias("GROUP_ID"))
     admin_ids: str = Field("", validation_alias=_alias("ADMIN_IDS"))
     db_path: str = Field("data/tenribot.db", validation_alias=_alias("DB_PATH"))
+    # Одноразовый сброс БД: при смене метки TENRI_RESET_DB база дропается и пересоздаётся
+    # на старте (пустая + сид). С той же меткой повторно НЕ срабатывает (метка запоминается
+    # в БД) — переменную можно спокойно оставить в Railway. Чтобы сбросить снова — сменить.
+    reset_db_tag: str = Field("", validation_alias=_alias("RESET_DB"))
     # Только TENRI_TIMEZONE/TIMEZONE. Раньше сюда был алиасом привязан POSIX TZ — а его
     # операторы штатно ставят для системного времени/логов контейнера; лишний TZ=UTC молча
     # сдвигал бы тихие часы и расписания. Бизнес-таймзону задаём отдельным именем.

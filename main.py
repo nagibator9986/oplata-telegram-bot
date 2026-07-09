@@ -55,6 +55,31 @@ def _start_health_server() -> None:
     log.info("health-эндпоинт слушает :%s", port)
 
 
+async def _maybe_reset_db(settings) -> bool:
+    """Одноразовый сброс БД по метке TENRI_RESET_DB.
+
+    Дропает и пересоздаёт все таблицы, если метка задана и отличается от последней
+    применённой (хранится в settings._reset_tag). С той же меткой повторно не срабатывает,
+    поэтому переменную можно безопасно оставить включённой в Railway. Возвращает True,
+    если база была сброшена (тогда вызывающий сидирует заново и запоминает метку).
+    """
+    from db import repo
+    from db.base import Base, engine
+
+    tag = (settings.reset_db_tag or "").strip()
+    if not tag:
+        return False
+    if await repo.get_setting("_reset_tag", "") == tag:
+        return False  # этой меткой уже сбрасывали
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    log.critical("⚠️ БАЗА ДАННЫХ ПОЛНОСТЬЮ СБРОШЕНА (TENRI_RESET_DB=%r). Все лиды/тексты/"
+                 "рассылки удалены и пересоздаются из сидов. Повторно с этой меткой не сработает.",
+                 tag)
+    return True
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -67,7 +92,11 @@ async def main() -> None:
 
     _start_health_server()
     await init_db()
+    reset_done = await _maybe_reset_db(settings)
     await seed_defaults()
+    if reset_done:
+        from db import repo
+        await repo.set_setting("_reset_tag", settings.reset_db_tag.strip())
 
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     me = await bot.get_me()
