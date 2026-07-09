@@ -47,6 +47,15 @@ async def _ensure_invite_link(bot: Bot, lead: Lead) -> tuple[Lead, str]:
 
 @router.callback_query(F.data == "go:group")
 async def cb_group(call: CallbackQuery, lead: Lead, bot: Bot) -> None:
+    # Группа — только для прошедших фильтр масштаба (в группу нельзя всех желающих).
+    if lead.funnel_state == Funnel.UNQUALIFIED:
+        await call.answer()
+        await send_slot(bot, call.message.chat.id, "survey_reject", lead)  # вежливый отказ, без ссылки
+        return
+    if not lead.qualified:
+        await call.answer()
+        await send_slot(bot, call.message.chat.id, "group_needs_filter", lead)
+        return
     lead, link = await _ensure_invite_link(bot, lead)
     if not link:
         await call.answer("Ссылка временно недоступна, попробуйте позже 🙏", show_alert=True)

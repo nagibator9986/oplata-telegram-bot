@@ -52,10 +52,17 @@ async def init_db() -> None:
         await _ensure_columns(conn, "leads", {
             "deep_audit": "BOOLEAN DEFAULT 0",
             "company_name": "VARCHAR(200) DEFAULT ''",
+            "qualified": "BOOLEAN DEFAULT 0",
         })
         await _ensure_columns(conn, "survey_responses", {
             "kind": "VARCHAR(16) DEFAULT 'lead'",
         })
+        # Бэкфилл qualified для лидов, уже прошедших фильтр до появления флага: есть паспорт
+        # (company_name), в группе или завершили анкету. Идемпотентно (0→1 при наличии признака).
+        await conn.execute(text(
+            "UPDATE leads SET qualified=1 WHERE qualified=0 AND ("
+            "in_group=1 OR survey_completed_at IS NOT NULL OR "
+            "(company_name IS NOT NULL AND company_name != ''))"))
 
 
 async def _ensure_columns(conn, table: str, columns: dict[str, str]) -> None:

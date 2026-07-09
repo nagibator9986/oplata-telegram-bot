@@ -39,8 +39,23 @@ router = Router(name="survey")
 PAUSE_BTN = InlineKeyboardButton(text="⏸ Продолжить позже", callback_data="sv:pause")
 
 
+def _choice_kb(options: list) -> InlineKeyboardMarkup:
+    rows = [[InlineKeyboardButton(text=opt, callback_data=f"sv:opt:{i}")]
+            for i, opt in enumerate(options)]
+    rows.append([PAUSE_BTN])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _qualify_confirm_kb(qidx: int, opt_idx: int) -> InlineKeyboardMarkup:
+    """Подтверждение выбора фильтр-вопроса — защита от случайного тапа."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да, всё верно", callback_data=f"sv:qy:{qidx}:{opt_idx}")],
+        [InlineKeyboardButton(text="◀️ Изменить", callback_data=f"sv:qn:{qidx}")],
+    ])
+
+
 async def begin_survey(bot: Bot, chat_id: int, lead: Lead, state: FSMContext) -> None:
-    # Отсеянного фильтром лида не пускаем обратно в анкету — только приглашение в клуб
+    # Отсеянного фильтром лида не пускаем обратно в анкету — только вежливый отказ
     if lead.funnel_state == Funnel.UNQUALIFIED:
         await send_slot(bot, chat_id, "survey_reject", lead)
         return
@@ -81,10 +96,7 @@ async def _ask_current(bot: Bot, chat_id: int, resp_id: int) -> None:
     header = f"<b>Вопрос {idx + 1} из {len(questions)}</b>\n\n{escape(q.text)}"
 
     if q.field_type == "choice":
-        rows = [[InlineKeyboardButton(text=opt, callback_data=f"sv:opt:{i}")]
-                for i, opt in enumerate(q.options or [])]
-        rows.append([PAUSE_BTN])
-        await bot.send_message(chat_id, header, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+        await bot.send_message(chat_id, header, reply_markup=_choice_kb(q.options or []))
     elif q.field_type == "multichoice":
         await bot.send_message(chat_id, header + "\n\n<i>Можно выбрать несколько вариантов.</i>",
                                reply_markup=_multi_kb(q.options or [], []))
@@ -131,7 +143,7 @@ async def _reject(bot: Bot, chat_id: int, state: FSMContext, lead: Lead, resp_id
     await bot.send_message(chat_id, "Спасибо за ответы 🙏", reply_markup=ReplyKeyboardRemove())
     await send_slot(bot, chat_id, "survey_reject", lead)
     await notify_admins(bot, f"ℹ️ Лид не прошёл фильтр масштаба: {escape(lead.display_name)} "
-                             f"(приглашён в клуб).")
+                             f"(группа и аудит не выданы).")
 
 
 async def _record(bot: Bot, chat_id: int, state: FSMContext, lead: Lead, value: str) -> None:
@@ -148,9 +160,22 @@ async def _record(bot: Bot, chat_id: int, state: FSMContext, lead: Lead, value: 
     await repo.save_answer(resp_id, {"q": q.text, "a": value}, next_idx)
     await state.update_data(multi=[])
 
-    # Фильтр: мягкий отказ, если ответ дисквалифицирующий
-    if q.stage == "qualify" and value in (q.disqualify_if or []):
-        await _reject(bot, chat_id, state, lead, resp_id)
+    # Фильтр масштаба (qualify): отказ / следующий фильтр-вопрос / пауза с оффером
+    if q.stage == "qualify":
+        if value in (q.disqualify_if or []):
+            await _reject(bot, chat_id, state, lead, resp_id)
+            return
+        last_qualify = next_idx >= len(questions) or questions[next_idx].stage != "qualify"
+        if last_qualify:
+            # Прошёл фильтр целиком → флаг qualified + пауза: аудит и группа предлагаются
+            # кнопками (сначала фильтрация, потом уже аудит и закрытая группа).
+            lead = await repo.update_lead(lead.telegram_id, qualified=True) or lead
+            await state.clear()
+            await send_slot(bot, chat_id, "qualified_hub", lead)
+            await notify_admins(
+                bot, f"✅ Лид прошёл фильтр масштаба: {escape(lead.display_name)}.")
+            return
+        await _ask_current(bot, chat_id, resp_id)  # ещё есть фильтр-вопросы
         return
 
     # Паспорт: название компании берём с ПЕРВОГО вопроса-паспорта (по позиции, не по тексту —
@@ -234,13 +259,70 @@ async def cb_choice(call: CallbackQuery, lead: Lead, bot: Bot, state: FSMContext
     await call.answer()
     if resp is None or resp.current_index >= len(questions):
         return
-    q = questions[resp.current_index]
+    qidx = resp.current_index
+    q = questions[qidx]
     try:
-        value = (q.options or [])[int(call.data.split(":")[2])]
+        opt_idx = int(call.data.split(":")[2])
+        value = (q.options or [])[opt_idx]
     except (ValueError, IndexError):
+        return
+    # Фильтр-вопросы решают судьбу лида → переспрашиваем (защита от случайного тапа)
+    if q.stage == "qualify":
+        try:
+            await call.message.edit_text(
+                f"<b>Вопрос {qidx + 1} из {len(questions)}</b>\n\n{escape(q.text)}\n\n"
+                f"Вы выбрали: <b>{escape(value)}</b>. Всё верно?",
+                reply_markup=_qualify_confirm_kb(qidx, opt_idx))
+        except Exception:
+            pass
         return
     await call.message.edit_reply_markup(reply_markup=None)
     await _record(bot, call.message.chat.id, state, lead, value)
+
+
+@router.callback_query(SurveyStates.answering, F.data.startswith("sv:qy:"))
+async def cb_qualify_confirm(call: CallbackQuery, lead: Lead, bot: Bot, state: FSMContext) -> None:
+    """Подтверждение фильтр-ответа → записываем."""
+    await call.answer()
+    parts = call.data.split(":")
+    try:
+        qidx, opt_idx = int(parts[2]), int(parts[3])
+    except (ValueError, IndexError):
+        return
+    questions = await repo.active_questions()
+    resp = await _get_resp((await state.get_data()).get("resp_id"))
+    if resp is None or qidx >= len(questions) or resp.current_index != qidx:
+        return  # устаревший тап — вопрос уже сменился
+    try:
+        value = (questions[qidx].options or [])[opt_idx]
+    except IndexError:
+        return
+    try:
+        await call.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await _record(bot, call.message.chat.id, state, lead, value)
+
+
+@router.callback_query(SurveyStates.answering, F.data.startswith("sv:qn:"))
+async def cb_qualify_change(call: CallbackQuery, state: FSMContext) -> None:
+    """«Изменить» — возвращаем варианты фильтр-вопроса."""
+    await call.answer()
+    try:
+        qidx = int(call.data.split(":")[2])
+    except (ValueError, IndexError):
+        return
+    questions = await repo.active_questions()
+    resp = await _get_resp((await state.get_data()).get("resp_id"))
+    if resp is None or qidx >= len(questions) or resp.current_index != qidx:
+        return
+    q = questions[qidx]
+    try:
+        await call.message.edit_text(
+            f"<b>Вопрос {qidx + 1} из {len(questions)}</b>\n\n{escape(q.text)}",
+            reply_markup=_choice_kb(q.options or []))
+    except Exception:
+        pass
 
 
 @router.callback_query(SurveyStates.answering, F.data.startswith("sv:mt:"))

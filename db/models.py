@@ -66,6 +66,9 @@ class Lead(TimestampMixin, Base):
     last_name: Mapped[str] = mapped_column(String(128), default="")
     phone: Mapped[str] = mapped_column(String(24), default="")
     funnel_state: Mapped[str] = mapped_column(String(32), default=Funnel.NEW, index=True)
+    # Прошёл фильтр масштаба (qualify-вопросы). Только qualified лид получает ссылку в
+    # группу и продолжение аудита. UNQUALIFIED — терминальный отказ, здесь остаётся False.
+    qualified: Mapped[bool] = mapped_column(Boolean, default=False)
     source: Mapped[str] = mapped_column(String(64), default="")
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)      # заблокировал бота (403)
     do_not_disturb: Mapped[bool] = mapped_column(Boolean, default=False)  # нажал «Не беспокоить»
