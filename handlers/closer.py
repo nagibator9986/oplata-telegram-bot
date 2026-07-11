@@ -10,11 +10,12 @@ from __future__ import annotations
 from html import escape
 
 from aiogram import Bot, F, Router
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
-from config import get_settings
-from db.models import Lead
+from db import repo
+from db.models import Funnel, Lead
 from keyboards.common import kb_from_json
 from services import closer
 from services.content import send_slot
@@ -34,14 +35,9 @@ CLOSER_QUICK = [
 _hot_notified: set[int] = set()
 
 
-def _cta_kb():
-    """Клавиатура под ответом продажника: оплата (URL) + менеджер + выход."""
-    url = f"{get_settings().site_url.rstrip('/')}/tariffs?src=tenri"
-    return kb_from_json([
-        [{"text": "🧿 Заказать полный разбор", "url": url}],
-        [{"text": "👤 Позвать менеджера", "cb": "go:human"}],
-        [{"text": "⏹ Не сейчас", "cb": "cl:stop"}],
-    ])
+def _cta_kb(lead: Lead):
+    """CTA-клавиатура, зависящая от того, прошёл ли лид аудит (до/после)."""
+    return closer.cta_keyboard(lead.survey_completed_at is not None)
 
 
 def _greeting_kb():
@@ -61,7 +57,7 @@ async def _respond(bot: Bot, chat_id: int, lead: Lead, user_text: str) -> None:
             reply_markup=lead_admin_kb(lead),
         )
     # parse_mode=None: ответ LLM недоверенный (символы </& под HTML → 400 и потеря ответа)
-    await bot.send_message(chat_id, answer, reply_markup=_cta_kb(),
+    await bot.send_message(chat_id, answer, reply_markup=_cta_kb(lead),
                            disable_web_page_preview=True, parse_mode=None)
 
 
@@ -71,7 +67,7 @@ async def cb_closer(call: CallbackQuery, lead: Lead, bot: Bot, state: FSMContext
     _hot_notified.discard(lead.id)  # новый диалог — сбрасываем дедуп
     if not await closer.is_enabled():
         # даже без AI не теряем оффер — CTA-кнопка остаётся
-        await call.message.answer(closer.FALLBACK, reply_markup=_cta_kb(), parse_mode=None)
+        await call.message.answer(closer.FALLBACK, reply_markup=_cta_kb(lead), parse_mode=None)
         return
     await state.set_state(CloserStates.chatting)
     await send_slot(bot, call.message.chat.id, "closer_greeting", lead,
@@ -86,7 +82,7 @@ async def cb_quick(call: CallbackQuery, lead: Lead, bot: Bot, state: FSMContext)
     except (ValueError, IndexError):
         return
     if not await closer.is_enabled():
-        await call.message.answer(closer.FALLBACK, reply_markup=_cta_kb(), parse_mode=None)
+        await call.message.answer(closer.FALLBACK, reply_markup=_cta_kb(lead), parse_mode=None)
         return
     await state.set_state(CloserStates.chatting)
     await call.message.answer(f"<i>Вы: {escape(text)}</i>")
@@ -99,7 +95,7 @@ async def msg_closer(message: Message, lead: Lead, bot: Bot, state: FSMContext) 
     # Тумблер closer_enabled должен действовать и на уже открытые диалоги.
     if not await closer.is_enabled():
         await state.clear()
-        await message.answer(closer.FALLBACK, reply_markup=_cta_kb(), parse_mode=None)
+        await message.answer(closer.FALLBACK, reply_markup=_cta_kb(lead), parse_mode=None)
         return
     await bot.send_chat_action(message.chat.id, "typing")
     await _respond(bot, message.chat.id, lead, message.text.strip())
@@ -113,3 +109,26 @@ async def cb_stop(call: CallbackQuery, lead: Lead, state: FSMContext) -> None:
     await call.message.answer(
         "Хорошо, не тороплю 🌿 Когда будете готовы обсудить разбор — я на связи. "
         "Просто напишите /start.")
+
+
+@router.message(StateFilter(None), F.chat.type == "private", F.text)
+async def msg_idle(message: Message, lead: Lead, bot: Bot) -> None:
+    """Свободный текст лида вне сценария → AI-консультант (разговор «без кнопок»).
+
+    Раньше это сообщение уходило в fallback-меню. Теперь продажник-консультант
+    сам отвечает: до анкеты объясняет и ведёт к бесплатному аудиту, после — продаёт
+    полный разбор. Отсеянным фильтром (UNQUALIFIED) и при выключенном AI — меню."""
+    text = (message.text or "").strip()
+    if text.startswith("/"):
+        return  # неизвестная команда — молчим (как в fallback)
+    if lead.is_blocked:
+        return
+    # Продажник не для отсеянных фильтром и не для участников чужого аудита (сотрудников):
+    # им — обычное меню. Проверку участника делаем последней (короткое замыкание).
+    if (not await closer.is_enabled()) or lead.funnel_state == Funnel.UNQUALIFIED \
+            or await repo.is_participant(lead.id):
+        from handlers.start import main_menu_kb
+        await message.answer("Выберите, что вам интересно 👇", reply_markup=main_menu_kb())
+        return
+    await bot.send_chat_action(message.chat.id, "typing")
+    await _respond(bot, message.chat.id, lead, text)

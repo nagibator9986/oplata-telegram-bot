@@ -84,6 +84,8 @@ class Lead(TimestampMixin, Base):
     donation_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     donated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # Момент проактивного AI-«опенера» продажника — чтобы отправить его один раз.
+    proactive_opener_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     @property
     def display_name(self) -> str:

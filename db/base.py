@@ -53,6 +53,7 @@ async def init_db() -> None:
             "deep_audit": "BOOLEAN DEFAULT 0",
             "company_name": "VARCHAR(200) DEFAULT ''",
             "qualified": "BOOLEAN DEFAULT 0",
+            "proactive_opener_at": "DATETIME",
         })
         await _ensure_columns(conn, "survey_responses", {
             "kind": "VARCHAR(16) DEFAULT 'lead'",

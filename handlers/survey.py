@@ -209,11 +209,28 @@ async def _finalize(bot: Bot, chat_id: int, state: FSMContext, lead: Lead, resp_
     lead = await advance(lead, Funnel.SURVEY_DONE, survey_completed_at=utcnow())
     await bot.send_message(chat_id, "✅ Аудит завершён!", reply_markup=ReplyKeyboardRemove())
     await send_slot(bot, chat_id, "survey_thanks", lead)
+
+    # СНАЧАЛА обязательное: ссылки команде (углублённый), уведомление админам, синк CRM —
+    # это не должно зависеть от AI-продажника.
     if lead.deep_audit:  # углублённый: сразу выдаём владельцу ссылки для команды
         from handlers.deep_audit import send_team_links
         await send_team_links(bot, chat_id, lead)
     await notify_admins_long(bot, response_card(lead, resp), reply_markup=lead_admin_kb(lead))
     platform.sync_lead(lead, "survey_completed", answers=resp.answers)
+
+    # ПОТОМ (не критично) AI-продажник: диагноз проблемных зон + оффер калибровки.
+    # Оборачиваем — сбой AI/отправки не должен ломать завершение анкеты.
+    from services import closer
+    try:
+        if await closer.is_enabled():
+            await bot.send_chat_action(chat_id, "typing")
+            pitch = await closer.post_survey_pitch(lead)
+            if pitch:  # parse_mode=None: вывод LLM недоверенный
+                await bot.send_message(chat_id, pitch,
+                                       reply_markup=closer.cta_keyboard(surveyed=True),
+                                       disable_web_page_preview=True, parse_mode=None)
+    except Exception:
+        log.exception("пост-анкетный питч не отправлен (не критично)")
 
 
 # --- Входные точки ---

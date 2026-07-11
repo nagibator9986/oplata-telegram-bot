@@ -102,6 +102,13 @@ def _participant_lead_ids_subq():
         AuditParticipant.participant_lead_id.is_not(None))
 
 
+async def is_participant(lead_id: int) -> bool:
+    """Лид — участник чьего-то углублённого аудита (не маркетинговый лид)."""
+    async with Session() as s:
+        return ((await s.execute(select(func.count(AuditParticipant.id)).where(
+            AuditParticipant.participant_lead_id == lead_id))).scalar() or 0) > 0
+
+
 async def leads_for_dm(target: str, segment: dict) -> list[Lead]:
     """Получатели DM-рассылки. Blocked, do_not_disturb и участники аудита исключаются всегда."""
     async with Session() as s:
@@ -652,6 +659,25 @@ async def closer_msgs_today(lead_id: int) -> int:
             CloserMessage.lead_id == lead_id, CloserMessage.role == "user",
             CloserMessage.created_at >= day_start,
         ))).scalar() or 0
+
+
+async def leads_due_proactive_opener(delay_minutes: int) -> list[Lead]:
+    """Лиды, зашедшие с рекламы и замолчавшие: на стадии WELCOMED, без активности
+    delay_minutes, ещё не получавшие проактивный опенер. Blocked/DND/участники и
+    те, кто уже АКТИВНО переписывается с продажником (свежий CloserMessage) — вон."""
+    cutoff = utcnow() - timedelta(minutes=delay_minutes)
+    # уже общается: есть сообщение продажника за окно delay → опенер не нужен
+    recent_dialog = select(CloserMessage.lead_id).where(CloserMessage.created_at > cutoff)
+    async with Session() as s:
+        rows = await s.execute(select(Lead).where(
+            Lead.funnel_state == Funnel.WELCOMED,
+            Lead.updated_at <= cutoff,
+            Lead.proactive_opener_at.is_(None),
+            Lead.is_blocked.is_(False), Lead.do_not_disturb.is_(False),
+            Lead.id.not_in(_participant_lead_ids_subq()),
+            Lead.id.not_in(recent_dialog),
+        ).limit(30))
+        return list(rows.scalars())
 
 # ---------------------------------------------------------------- Donations
 
