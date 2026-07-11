@@ -18,6 +18,11 @@ class AssistantStates(StatesGroup):
     chatting = State()
 
 
+class CloserStates(StatesGroup):
+    """AI-продажник: доводит квалифицированного лида до заказа разбора."""
+    chatting = State()
+
+
 class ContactStates(StatesGroup):
     waiting_message = State()
 

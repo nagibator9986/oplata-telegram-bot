@@ -1,6 +1,7 @@
 """Сборка роутеров. Порядок важен: админ → сценарии → fallback."""
 from handlers import (
     assistant,
+    closer,
     contact,
     deep_audit,
     donation,
@@ -20,6 +21,7 @@ client_routers = [
     deep_audit.router,
     donation.router,
     assistant.router,
+    closer.router,
     contact.router,
     fallback.router,  # всегда последним
 ]

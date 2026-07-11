@@ -263,6 +263,23 @@ class AssistantMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class CloserMessage(Base):
+    """История диалога AI-продажника («дожим» в личке).
+
+    Отдельно от AssistantMessage: у продажника своя персона и контекст, поэтому
+    история и per-lead суточный лимит считаются раздельно. Токены при этом идут в
+    ОБЩИЙ дневной бюджет (repo.ai_tokens_today суммирует обе таблицы)."""
+
+    __tablename__ = "closer_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    lead_id: Mapped[int] = mapped_column(ForeignKey("leads.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(12))  # user|assistant
+    content: Mapped[str] = mapped_column(Text)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

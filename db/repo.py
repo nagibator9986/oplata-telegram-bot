@@ -11,6 +11,7 @@ from db.models import (
     AuditParticipant,
     BotText,
     Broadcast,
+    CloserMessage,
     FollowUpRule,
     FollowUpTask,
     Funnel,
@@ -141,10 +142,13 @@ async def stats_summary() -> dict:
         deep_participants_done = (await s.execute(
             select(func.count(AuditParticipant.id))
             .where(AuditParticipant.status == "completed"))).scalar() or 0
-        tokens_today = (await s.execute(
-            select(func.coalesce(func.sum(AssistantMessage.tokens), 0)).where(
-                AssistantMessage.created_at >= now.replace(hour=0, minute=0, second=0, microsecond=0))
-        )).scalar() or 0
+        _day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Токены за сегодня — ассистент + продажник (общий дневной бюджет, ср. ai_tokens_today).
+        tokens_today = ((await s.execute(
+            select(func.coalesce(func.sum(AssistantMessage.tokens), 0))
+            .where(AssistantMessage.created_at >= _day0))).scalar() or 0) + ((await s.execute(
+            select(func.coalesce(func.sum(CloserMessage.tokens), 0))
+            .where(CloserMessage.created_at >= _day0))).scalar() or 0)
         return {
             "total": await cnt(),
             "today": await cnt(Lead.created_at >= now - timedelta(days=1)),
@@ -599,13 +603,20 @@ async def assistant_history(lead_id: int, limit: int) -> list[AssistantMessage]:
 
 
 async def ai_tokens_today() -> int:
-    """Суммарный расход токенов за сегодня (глобальный дневной бюджет)."""
+    """Суммарный расход токенов за сегодня (глобальный дневной бюджет).
+
+    Считает и ассистента, и продажника — бюджет общий на весь проект."""
     async with Session() as s:
         day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        return (await s.execute(
+        a = (await s.execute(
             select(func.coalesce(func.sum(AssistantMessage.tokens), 0))
             .where(AssistantMessage.created_at >= day_start)
         )).scalar() or 0
+        c = (await s.execute(
+            select(func.coalesce(func.sum(CloserMessage.tokens), 0))
+            .where(CloserMessage.created_at >= day_start)
+        )).scalar() or 0
+        return a + c
 
 
 async def assistant_msgs_today(lead_id: int) -> int:
@@ -614,6 +625,32 @@ async def assistant_msgs_today(lead_id: int) -> int:
         return (await s.execute(select(func.count(AssistantMessage.id)).where(
             AssistantMessage.lead_id == lead_id, AssistantMessage.role == "user",
             AssistantMessage.created_at >= day_start,
+        ))).scalar() or 0
+
+
+# ---------------------------------------------------------------- Closer (продажник)
+
+
+async def add_closer_msg(lead_id: int, role: str, content: str, tokens: int = 0) -> None:
+    async with Session() as s:
+        s.add(CloserMessage(lead_id=lead_id, role=role, content=content, tokens=tokens))
+        await s.commit()
+
+
+async def closer_history(lead_id: int, limit: int) -> list[CloserMessage]:
+    async with Session() as s:
+        rows = await s.execute(select(CloserMessage)
+                               .where(CloserMessage.lead_id == lead_id)
+                               .order_by(CloserMessage.id.desc()).limit(limit))
+        return list(reversed(list(rows.scalars())))
+
+
+async def closer_msgs_today(lead_id: int) -> int:
+    async with Session() as s:
+        day_start = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        return (await s.execute(select(func.count(CloserMessage.id)).where(
+            CloserMessage.lead_id == lead_id, CloserMessage.role == "user",
+            CloserMessage.created_at >= day_start,
         ))).scalar() or 0
 
 # ---------------------------------------------------------------- Donations
