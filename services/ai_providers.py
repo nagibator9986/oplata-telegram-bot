@@ -42,10 +42,19 @@ async def _gemini(system: str, messages: list[dict], temperature: float,
     hist = list(messages)
     while hist and hist[0]["role"] != "user":
         hist.pop(0)
+    # Gemini v1beta требует строгого чередования user/model. Если в истории оказались
+    # два хода одной роли подряд (напр. «висячий» user после сбоя провайдера) — склеиваем
+    # их в один, иначе запрос отклоняется с HTTP 400.
+    merged: list[dict] = []
+    for m in hist:
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1]["content"] += "\n" + m["content"]
+        else:
+            merged.append(dict(m))
     contents = [
         {"role": "user" if m["role"] == "user" else "model",
          "parts": [{"text": m["content"]}]}
-        for m in hist
+        for m in merged
     ]
     body = {
         "system_instruction": {"parts": [{"text": system}]},

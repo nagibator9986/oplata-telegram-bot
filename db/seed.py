@@ -54,6 +54,20 @@ SURVEY_THANKS_BTNS = [[{"text": "🧿 Заказать полный разбор
 SURVEY_THANKS_BTNS_OLD = [[{"text": "🧿 Заказать полный разбор", "url": _TARIFFS_URL}],
                           [{"text": "💬 Задать вопрос", "cb": "go:ask"}]]
 
+# Прежний текст слотов (до добавления консультанта) — для text-sync миграции
+# существующих БД: обновляем текст, ТОЛЬКО если он ещё дефолтный (правки владельца
+# через админку не затираем). Новый текст берётся из TEXTS по ключу.
+QUALIFIED_HUB_TEXT_OLD = (
+    "Отлично — по масштабу Ваша система нам подходит ✅\n\n"
+    "Теперь доступны два шага:\n"
+    "• пройти полный аудит по Коду Вечного Иля (паспорт компании и основная часть)\n"
+    "• вступить в закрытую группу с разборами мировых компаний\n\n"
+    "С чего начнём?")
+SURVEY_THANKS_TEXT_OLD = (
+    "Спасибо, {name}! Ваши ответы переданы аналитику. 🙏\n\n"
+    "Мы изучим их и вернёмся с обратной связью. А пока — загляните в группу, "
+    "там свежие разборы компаний.")
+
 # ==================================================================== ТЕКСТЫ
 # HTML-разметка Telegram. Плейсхолдеры: {name}, {group_link}.
 
@@ -585,6 +599,16 @@ async def seed_defaults() -> None:
             bt = (await s.execute(select(BotText).where(BotText.key == key))).scalars().first()
             if bt is not None and bt.buttons == old_btns:
                 bt.buttons = new_btns
+
+        # 3) Текст слотов, куда добавили кнопку продажника: подтягиваем к новому
+        #    дефолту (упоминает консультанта), но ТОЛЬКО если текст ещё старый —
+        #    правки владельца через админку не затираем.
+        _new_texts = {t["key"]: t["text"] for t in TEXTS}
+        for key, old_text in (("qualified_hub", QUALIFIED_HUB_TEXT_OLD),
+                              ("survey_thanks", SURVEY_THANKS_TEXT_OLD)):
+            bt = (await s.execute(select(BotText).where(BotText.key == key))).scalars().first()
+            if bt is not None and bt.text == old_text and key in _new_texts:
+                bt.text = _new_texts[key]
 
         existing_settings = {k for (k,) in (await s.execute(select(Setting.key))).all()}
         for k, v in SETTINGS_DEFAULTS.items():

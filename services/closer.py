@@ -36,10 +36,12 @@ _COOLDOWN_SEC = 2.0
 _last_call: dict[int, float] = {}  # lead_id → monotonic time (антифлуд)
 
 # Сигналы «готов купить» — для мгновенного хэндоффа на живого менеджера.
+# Только однозначные коммерческие подстроки (без 'цена'/'беру'/'счёт' — они дают
+# ложные срабатывания на идиомах «цена вопроса», «беру паузу», «на мой счёт»).
 _HOT_SIGNALS = (
-    "оплат", "куплю", "покупаю", "беру", "оформ", "реквизит", "счёт", "счет",
-    "как заказать", "как оплатить", "готов начать", "сколько стоит", "цена",
-    "стоимость", "договор", "предоплат",
+    "оплат", "куплю", "покупаю", "оформ", "реквизит", "предоплат",
+    "как заказать", "как оплатить", "где оплатить",
+    "сколько стоит", "стоимость",
 )
 
 
@@ -118,10 +120,12 @@ async def reply(lead: Lead, user_text: str) -> tuple[str, bool]:
     messages = [{"role": m.role, "content": m.content} for m in history]
     messages.append({"role": "user", "content": user_text})
 
-    await repo.add_closer_msg(lead.id, "user", user_text)
     try:
         text, tokens, provider = await complete(system, messages,
                                                 temperature=0.7, max_tokens=500)
+        # Сохраняем ход ТОЛЬКО при успехе — иначе в истории остаётся «висячий» user
+        # без ответа, и на следующем ходу получаются два user подряд → Gemini 400.
+        await repo.add_closer_msg(lead.id, "user", user_text)
         await repo.add_closer_msg(lead.id, "assistant", text, tokens=tokens)
         log.info("продажник ответил лиду %s через %s (%s ток., hot=%s)",
                  lead.telegram_id, provider, tokens, hot)

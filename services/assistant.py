@@ -59,9 +59,11 @@ async def reply(lead: Lead, user_text: str) -> str:
     messages = [{"role": m.role, "content": m.content} for m in history]
     messages.append({"role": "user", "content": user_text})
 
-    await repo.add_assistant_msg(lead.id, "user", user_text)
     try:
         text, tokens, provider = await complete(system, messages)
+        # Сохраняем ход только при успехе — иначе «висячий» user без ответа даёт
+        # два user подряд на следующем ходу → Gemini 400 (см. services/closer.py).
+        await repo.add_assistant_msg(lead.id, "user", user_text)
         await repo.add_assistant_msg(lead.id, "assistant", text, tokens=tokens)
         log.info("ассистент ответил лиду %s через %s (%s ток.)", lead.telegram_id, provider, tokens)
         return text
