@@ -31,6 +31,7 @@ from services import platform
 from services.content import send_slot
 from services.funnel import advance
 from services.notifier import lead_admin_kb, notify_admins, notify_admins_long, response_card
+from services.validation import check_answer
 from states import SurveyStates
 
 log = logging.getLogger(__name__)
@@ -427,4 +428,10 @@ async def msg_answer(message: Message, lead: Lead, bot: Bot, state: FSMContext) 
             await message.answer("Нужно число — например: 12 или 3.5")
             return
         text = normalized
+    else:
+        # Отсекаем мусорные ответы («...», «ааааа», «фывфыв») — вопрос переспрашивается
+        err = check_answer(text)
+        if err:
+            await message.answer(err)
+            return
     await _record(bot, message.chat.id, state, lead, text)

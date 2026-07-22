@@ -90,6 +90,17 @@ async def main() -> None:
         raise SystemExit("TENRI_ADMIN_IDS пуст — задайте telegram_id администраторов "
                          "(через запятую), иначе админ-панель недоступна.")
 
+    # Относительный путь = база во ВРЕМЕННОМ слое контейнера: на Railway её стирает
+    # КАЖДЫЙ редеплой (лиды, ответы, прогресс анкет). Кричим в лог, чтобы это нельзя
+    # было не заметить — прогресс анкет «сбрасывался в начало» именно из-за этого.
+    if not os.path.isabs(settings.db_path):
+        log.critical(
+            "⚠️ TENRI_DB_PATH=%r — ОТНОСИТЕЛЬНЫЙ путь. База лежит во временном слое "
+            "контейнера и будет СТЁРТА при следующем редеплое: пропадут все лиды, "
+            "ответы и прогресс анкет. Подключите Volume на /data и задайте "
+            "TENRI_DB_PATH=/data/tenribot.db (см. docs/DEPLOY_RAILWAY.md).",
+            settings.db_path)
+
     _start_health_server()
     await init_db()
     reset_done = await _maybe_reset_db(settings)
