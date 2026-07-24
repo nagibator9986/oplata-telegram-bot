@@ -56,13 +56,16 @@ async def _gemini(system: str, messages: list[dict], temperature: float,
          "parts": [{"text": m["content"]}]}
         for m in merged
     ]
+    gen_cfg = {"temperature": temperature, "maxOutputTokens": max_tokens}
+    # Gemini 2.5+ по умолчанию «думает» и тратит на скрытые thinking-токены весь
+    # maxOutputTokens → возвращает ПУСТОЙ ответ (особенно при малом лимите, как у
+    # валидатора). Отключаем размышления, чтобы модель отдавала текст в пределах лимита.
+    if "2.5" in s.gemini_model or "gemini-3" in s.gemini_model:
+        gen_cfg["thinkingConfig"] = {"thinkingBudget": 0}
     body = {
         "system_instruction": {"parts": [{"text": system}]},
         "contents": contents,
-        "generationConfig": {
-            "temperature": temperature,
-            "maxOutputTokens": max_tokens,
-        },
+        "generationConfig": gen_cfg,
     }
     data = None
     for attempt in (1, 2):
