@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, or_, select, update
 
 from db.base import Session
 from db.models import (
+    AiUsage,
     AssistantMessage,
     AuditParticipant,
     BotText,
@@ -155,7 +156,9 @@ async def stats_summary() -> dict:
             select(func.coalesce(func.sum(AssistantMessage.tokens), 0))
             .where(AssistantMessage.created_at >= _day0))).scalar() or 0) + ((await s.execute(
             select(func.coalesce(func.sum(CloserMessage.tokens), 0))
-            .where(CloserMessage.created_at >= _day0))).scalar() or 0)
+            .where(CloserMessage.created_at >= _day0))).scalar() or 0) + ((await s.execute(
+            select(func.coalesce(func.sum(AiUsage.tokens), 0))
+            .where(AiUsage.created_at >= _day0))).scalar() or 0)
         return {
             "total": await cnt(),
             "today": await cnt(Lead.created_at >= now - timedelta(days=1)),
@@ -623,7 +626,20 @@ async def ai_tokens_today() -> int:
             select(func.coalesce(func.sum(CloserMessage.tokens), 0))
             .where(CloserMessage.created_at >= day_start)
         )).scalar() or 0
-        return a + c
+        u = (await s.execute(
+            select(func.coalesce(func.sum(AiUsage.tokens), 0))
+            .where(AiUsage.created_at >= day_start)
+        )).scalar() or 0
+        return a + c + u
+
+
+async def record_ai_tokens(tokens: int) -> None:
+    """Учесть токены AI вне диалогов (валидатор ответов) в общий дневной бюджет."""
+    if not tokens:
+        return
+    async with Session() as s:
+        s.add(AiUsage(tokens=tokens))
+        await s.commit()
 
 
 async def assistant_msgs_today(lead_id: int) -> int:

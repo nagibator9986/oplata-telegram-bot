@@ -1,12 +1,20 @@
 """Проверка осмысленности текстовых ответов анкеты.
 
-Ловит явный мусор («...», «ааааа», «фывфывфыв», «asdasd»), но НЕ мешает
-коротким законным ответам («Да», «Нет», «ИП», «Алматы», «5 лет») и ссылкам
-(вопросы про сайт и профили).
+Двухуровневая:
+1. Быстрая эвристика (check_answer) — ловит явный мусор («...», «ааааа») бесплатно.
+2. AI-проверка (check_answer_ai) — Gemini решает «осмысленно / бред» для тонких
+   случаев вроде «asdaa», «выфвыфв», «фывфыв» (набор клавиш с гласными, который
+   эвристика пропускает). С фолбэком (AI недоступен → принимаем) и учётом бюджета.
+
+Оба уровня НЕ мешают коротким законным ответам («Да», «Нет», «ИП», «Алматы»,
+«5 лет») и ссылкам/@handle.
 """
 from __future__ import annotations
 
+import logging
 import re
+
+log = logging.getLogger(__name__)
 
 # Гласные RU/KZ/EN — для оценки «похоже ли на слова»
 _VOWELS = set("аеёиоуыэюяәіөүaeiouy")
@@ -52,4 +60,53 @@ def check_answer(text: str) -> str | None:
         vowel_ratio = sum(1 for c in low if c in _VOWELS) / len(low)
         if vowel_ratio < 0.12 or vowel_ratio > 0.88:
             return GIBBERISH
+    return None
+
+
+# ── AI-уровень: Gemini определяет «осмысленно / бред» ────────────────────────
+
+_AI_SYSTEM = (
+    "Ты — валидатор ответов анкеты бизнес-аудита. Тебе дают вопрос и ответ человека. "
+    "Реши: это осмысленная попытка ответить — ИЛИ бессмыслица/случайный набор символов "
+    "(набор клавиш: «asdaa», «выфвыфв», «фывфыв», «qwerty», «...», «джждж»).\n"
+    "OK (осмысленно): любые реальные слова, названия компаний/брендов, города, числа, "
+    "ссылки, «да», «нет», «не знаю», «—», короткие ответы по сути — даже с опечатками.\n"
+    "BRED (бред): случайные буквы/символы без смысла, набор клавиш, бессмысленные повторы.\n"
+    "Если сомневаешься — считай OK. Ответь РОВНО одним словом: OK или BRED."
+)
+
+
+async def check_answer_ai(lead_id: int, question: str, answer: str) -> str | None:
+    """None — принять; строка — текст ошибки. Сначала эвристика, затем Gemini.
+
+    При недоступности AI / выключенной проверке / исчерпанном бюджете — принимаем
+    (эвристика уже отсекла явный мусор)."""
+    err = check_answer(answer)
+    if err:
+        return err
+
+    # локальные импорты — модуль без AI-зависимостей на импорте
+    from config import get_settings
+    from db import repo
+    from services.ai_providers import AIProviderError, complete, provider_chain
+
+    if not provider_chain():
+        return None
+    if (await repo.get_setting("answer_ai_check", "1")) != "1":
+        return None
+    s = get_settings()
+    if s.ai_daily_token_budget and await repo.ai_tokens_today() >= s.ai_daily_token_budget:
+        return None
+
+    try:
+        text, tokens, _ = await complete(
+            _AI_SYSTEM,
+            [{"role": "user", "content": f"Вопрос: {question[:300]}\nОтвет: {answer[:300]}"}],
+            temperature=0.0, max_tokens=4)
+    except AIProviderError:
+        return None  # AI недоступен — не блокируем прохождение анкеты
+    await repo.record_ai_tokens(tokens)
+    if "BRED" in text.upper():
+        log.info("анкета: AI отклонил ответ как бред: %r", answer[:60])
+        return GIBBERISH
     return None

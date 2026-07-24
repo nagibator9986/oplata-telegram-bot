@@ -282,6 +282,17 @@ class CloserMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class AiUsage(Base):
+    """Учёт токенов AI вне диалогов (валидатор ответов анкеты) — для общего
+    дневного бюджета (repo.ai_tokens_today суммирует это вместе с диалогами)."""
+
+    __tablename__ = "ai_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class Setting(Base):
     __tablename__ = "settings"
 

@@ -547,6 +547,7 @@ SETTINGS_DEFAULTS = {
     "closer_enabled": "1",
     "closer_proactive": "1",           # продажник сам пишет «замолчавшему» лиду с рекламы
     "closer_proactive_delay_min": "10",  # через сколько минут молчания
+    "answer_ai_check": "1",            # AI-проверка ответов анкеты на «бред» (Gemini)
     "test_mode": "0",
     "static_group_link": "",
     "followups_enabled": "1",

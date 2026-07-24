@@ -31,7 +31,7 @@ from services import platform
 from services.content import send_slot
 from services.funnel import advance
 from services.notifier import lead_admin_kb, notify_admins, notify_admins_long, response_card
-from services.validation import check_answer
+from services.validation import check_answer_ai
 from states import SurveyStates
 
 log = logging.getLogger(__name__)
@@ -429,8 +429,9 @@ async def msg_answer(message: Message, lead: Lead, bot: Bot, state: FSMContext) 
             return
         text = normalized
     else:
-        # Отсекаем мусорные ответы («...», «ааааа», «фывфыв») — вопрос переспрашивается
-        err = check_answer(text)
+        # Отсекаем мусор: эвристика + AI-проверка «осмысленно/бред». Вопрос переспрашивается.
+        await bot.send_chat_action(message.chat.id, "typing")
+        err = await check_answer_ai(lead.id, q.text, text)
         if err:
             await message.answer(err)
             return
