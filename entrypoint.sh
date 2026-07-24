@@ -9,6 +9,10 @@ DB_PATH="${TENRI_DB_PATH:-${DB_PATH:-}}"
 if [ -z "$DB_PATH" ] && [ -n "$RAILWAY_VOLUME_MOUNT_PATH" ]; then
     DB_PATH="${RAILWAY_VOLUME_MOUNT_PATH%/}/tenribot.db"
 fi
+# Каталог /data существует только при примонтированном томе — используем его.
+if [ -z "$DB_PATH" ] && [ -d "/data" ]; then
+    DB_PATH="/data/tenribot.db"
+fi
 DB_PATH="${DB_PATH:-/app/data/tenribot.db}"
 DB_DIR="$(dirname "$DB_PATH")"
 

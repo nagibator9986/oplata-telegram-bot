@@ -33,6 +33,11 @@ def _default_db_path() -> str:
     vol = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
     if vol:
         return f"{vol.rstrip('/')}/tenribot.db"
+    # Документированный mount path тома. Каталог /data существует ТОЛЬКО когда том
+    # реально примонтирован (образ его не создаёт) — безопасный авто-детект, даже
+    # если Railway не выставил RAILWAY_VOLUME_MOUNT_PATH.
+    if os.path.isdir("/data"):
+        return "/data/tenribot.db"
     return "data/tenribot.db"
 
 
