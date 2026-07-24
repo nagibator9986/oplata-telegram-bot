@@ -6,6 +6,7 @@ Railway переменную назвали `BOT_TOKEN` вместо `TENRI_BOT_
 """
 from __future__ import annotations
 
+import os
 import sys
 from functools import lru_cache
 from zoneinfo import ZoneInfo
@@ -22,6 +23,19 @@ def _alias(*names: str) -> AliasChoices:
     return AliasChoices(*out)
 
 
+def _default_db_path() -> str:
+    """Путь к SQLite, если TENRI_DB_PATH/DB_PATH не заданы.
+
+    Railway для примонтированного Volume САМ выставляет RAILWAY_VOLUME_MOUNT_PATH —
+    используем его автоматически, чтобы база легла на постоянный том без ручной
+    переменной. Иначе — относительный путь (dev), при котором main.py предупредит,
+    что данные будут стёрты при редеплое."""
+    vol = os.environ.get("RAILWAY_VOLUME_MOUNT_PATH", "").strip()
+    if vol:
+        return f"{vol.rstrip('/')}/tenribot.db"
+    return "data/tenribot.db"
+
+
 class Settings(BaseSettings):
     # env_prefix оставляем для полей без явного alias; case_sensitive=False — TENRI_/tenri_
     model_config = SettingsConfigDict(env_prefix="TENRI_", env_file=".env",
@@ -31,7 +45,7 @@ class Settings(BaseSettings):
     bot_token: str = Field(validation_alias=_alias("BOT_TOKEN"))
     group_id: int = Field(0, validation_alias=_alias("GROUP_ID"))
     admin_ids: str = Field("", validation_alias=_alias("ADMIN_IDS"))
-    db_path: str = Field("data/tenribot.db", validation_alias=_alias("DB_PATH"))
+    db_path: str = Field(default_factory=_default_db_path, validation_alias=_alias("DB_PATH"))
     # Одноразовый сброс БД: при смене метки TENRI_RESET_DB база дропается и пересоздаётся
     # на старте (пустая + сид). С той же меткой повторно НЕ срабатывает (метка запоминается
     # в БД) — переменную можно спокойно оставить в Railway. Чтобы сбросить снова — сменить.
